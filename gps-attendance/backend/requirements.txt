@@ -1,0 +1,9 @@
+fastapi[standard]
+uvicorn
+pydantic
+python-multipart
+aiofiles
+deepface
+tf-keras
+Pillow
+httpx
