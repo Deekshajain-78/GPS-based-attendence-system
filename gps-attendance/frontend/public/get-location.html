@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Location Finder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --cyan:#00d4ff; --purple:#7c3aed; --green:#00ff88; --bg:#020817; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body {
+      font-family:'Inter',sans-serif; background:var(--bg); color:#e2e8f0;
+      min-height:100vh; display:flex; align-items:center; justify-content:center; overflow:hidden;
+    }
+    #stars { position:fixed; inset:0; z-index:0; }
+    .aurora {
+      position:fixed; inset:0; z-index:0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% 20%,rgba(0,212,255,.09) 0%,transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 80%,rgba(124,58,237,.11) 0%,transparent 60%),
+        radial-gradient(ellipse 50% 60% at 50% 50%,rgba(0,255,136,.04) 0%,transparent 70%);
+      animation:auroraShift 10s ease-in-out infinite alternate;
+    }
+    @keyframes auroraShift { 0%{transform:scale(1) rotate(0deg)} 100%{transform:scale(1.1) rotate(3deg)} }
+    body::after {
+      content:''; position:fixed; inset:0; z-index:1; pointer-events:none;
+      background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);
+    }
+
+    .card {
+      position:relative; z-index:2; width:480px;
+      background:rgba(10,18,40,.88); backdrop-filter:blur(30px);
+      border-radius:28px; border:1px solid rgba(0,212,255,.15);
+      padding:2.5rem;
+      box-shadow:0 0 0 1px rgba(0,212,255,.05),0 40px 100px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);
+      animation:cardIn .8s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    @keyframes cardIn { from{opacity:0;transform:translateY(60px) scale(.9)} to{opacity:1;transform:translateY(0) scale(1)} }
+    .card::before,.card::after { content:''; position:absolute; width:20px; height:20px; border-color:var(--cyan); border-style:solid; }
+    .card::before { top:-1px; left:-1px; border-width:2px 0 0 2px; border-radius:4px 0 0 0; }
+    .card::after  { bottom:-1px; right:-1px; border-width:0 2px 2px 0; border-radius:0 0 4px 0; }
+    .header { text-align:center; margin-bottom:2rem; }
+    .sonar { position:relative; width:100px; height:100px; margin:0 auto 1.5rem; }
+    .sonar-ring {
+      position:absolute; inset:0; border-radius:50%;
+      border:1.5px solid var(--cyan); opacity:0;
+      animation:sonarPulse 3s ease-out infinite;
+    }
+    .sonar-ring:nth-child(2){animation-delay:1s} .sonar-ring:nth-child(3){animation-delay:2s}
+    @keyframes sonarPulse { 0%{transform:scale(.3);opacity:.8} 100%{transform:scale(1.8);opacity:0} }
+    .sonar-core {
+      position:absolute; inset:15px; border-radius:50%;
+      background:radial-gradient(circle,rgba(0,212,255,.2),rgba(0,212,255,.05));
+      border:1px solid rgba(0,212,255,.4);
+      display:flex; align-items:center; justify-content:center; font-size:2rem;
+      animation:corePulse 2s ease-in-out infinite;
+      box-shadow:0 0 30px rgba(0,212,255,.2),inset 0 0 20px rgba(0,212,255,.05);
+    }
+    @keyframes corePulse {
+      0%,100%{box-shadow:0 0 20px rgba(0,212,255,.2),inset 0 0 20px rgba(0,212,255,.05)}
+      50%{box-shadow:0 0 40px rgba(0,212,255,.4),inset 0 0 30px rgba(0,212,255,.1)}
+    }
+    .title {
+      font-size:1.7rem; font-weight:800; letter-spacing:-.02em;
+      background:linear-gradient(135deg,#fff 0%,var(--cyan) 50%,#818cf8 100%);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    }
+    .subtitle { color:#475569; font-size:.82rem; margin-top:.4rem; letter-spacing:.06em; text-transform:uppercase; }
+
+    .status-bar {
+      display:flex; align-items:center; gap:.6rem;
+      background:rgba(0,212,255,.05); border:1px solid rgba(0,212,255,.1);
+      border-radius:10px; padding:.6rem 1rem; margin-bottom:1.5rem;
+      font-size:.8rem;
+    }
+    .status-dot { width:8px; height:8px; border-radius:50%; background:#334155; flex-shrink:0; transition:background .3s; }
+    .status-dot.active { background:var(--green); box-shadow:0 0 8px var(--green); animation:blink 1s infinite; }
+    .status-dot.err    { background:#ef4444; box-shadow:0 0 8px #ef4444; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    #statusText { color:#94a3b8; }
+    .coords-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.5rem; }
+    .coord-card {
+      background:rgba(0,0,0,.3); border:1px solid rgba(255,255,255,.06);
+      border-radius:14px; padding:1rem 1.2rem;
+      transition:border-color .4s,box-shadow .4s; position:relative; overflow:hidden;
+    }
+    .coord-card.lit { border-color:rgba(0,255,136,.3); box-shadow:0 0 20px rgba(0,255,136,.08); }
+    .coord-card::before {
+      content:''; position:absolute; top:0; left:-100%; width:100%; height:100%;
+      background:linear-gradient(90deg,transparent,rgba(0,212,255,.06),transparent);
+      transition:left .6s;
+    }
+    .coord-card.lit::before { left:100%; }
+    .coord-tag { font-size:.7rem; font-weight:600; letter-spacing:.1em; color:#475569; text-transform:uppercase; margin-bottom:.4rem; }
+    .coord-val { font-family:'JetBrains Mono',monospace; font-size:1.1rem; font-weight:600; color:#334155; transition:color .4s; }
+    .coord-val.active { color:var(--green); }
+    .acc-row { display:flex; align-items:center; justify-content:center; gap:.5rem; margin-bottom:1.5rem; opacity:0; transition:opacity .5s; }
+    .acc-row.show { opacity:1; }
+    .acc-pill { display:flex; align-items:center; gap:.4rem; background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.3); border-radius:20px; padding:.35rem .9rem; font-size:.8rem; color:#a78bfa; }
+    .acc-bar-wrap { flex:1; height:4px; background:rgba(255,255,255,.05); border-radius:2px; overflow:hidden; max-width:100px; }
+    .acc-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--purple),var(--cyan)); border-radius:2px; transition:width 1s ease; }
+    .btn-wrap { position:relative; margin-bottom:1.5rem; }
+    .btn {
+      width:100%; padding:1rem;
+      background:linear-gradient(135deg,#0ea5e9,#7c3aed);
+      border:none; border-radius:14px; color:white; font-size:1rem; font-weight:700;
+      cursor:pointer; position:relative; overflow:hidden;
+      transition:transform .15s,box-shadow .3s;
+      box-shadow:0 4px 30px rgba(14,165,233,.3); letter-spacing:.02em;
+    }
+    .btn:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 8px 40px rgba(14,165,233,.45); }
+    .btn:active:not(:disabled) { transform:scale(.98); }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn .shine {
+      position:absolute; top:0; left:-100%; width:60%; height:100%;
+      background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);
+      animation:shine 3s infinite;
+    }
+    @keyframes shine { 0%{left:-100%} 100%{left:200%} }
+    .progress-bar { height:2px; background:rgba(255,255,255,.05); border-radius:1px; overflow:hidden; margin-top:.5rem; opacity:0; transition:opacity .3s; }
+    .progress-bar.show { opacity:1; }
+    .progress-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--cyan),var(--purple)); border-radius:1px; transition:width 8s linear; }
+    .progress-fill.run { width:90%; }
+
+    .code-box { background:rgba(0,0,0,.4); border:1px solid rgba(0,212,255,.1); border-radius:14px; overflow:hidden; opacity:0; transform:translateY(12px); transition:opacity .5s .1s,transform .5s .1s; }
+    .code-box.show { opacity:1; transform:translateY(0); }
+    .code-header { display:flex; align-items:center; justify-content:space-between; padding:.6rem 1rem; background:rgba(0,212,255,.05); border-bottom:1px solid rgba(0,212,255,.08); }
+    .code-dots { display:flex; gap:6px; }
+    .code-dots span { width:10px; height:10px; border-radius:50%; }
+    .code-dots span:nth-child(1){background:#ef4444} .code-dots span:nth-child(2){background:#f59e0b} .code-dots span:nth-child(3){background:#22c55e}
+    .code-filename { font-size:.75rem; color:#475569; font-family:'JetBrains Mono',monospace; }
+    .copy-btn { background:rgba(0,212,255,.1); border:1px solid rgba(0,212,255,.2); border-radius:6px; color:var(--cyan); font-size:.75rem; padding:.25rem .7rem; cursor:pointer; transition:background .2s; }
+    .copy-btn:hover { background:rgba(0,212,255,.2); }
+    .code-body { padding:1rem 1.2rem; }
+    .code-line { display:flex; gap:1rem; margin-bottom:.3rem; }
+    .ln { color:#1e3a5f; font-family:'JetBrains Mono',monospace; font-size:.8rem; user-select:none; min-width:16px; }
+    .code-text { font-family:'JetBrains Mono',monospace; font-size:.85rem; }
+    .kw{color:#c084fc} .nm{color:var(--green)} .cm{color:#334155}
+    .err-box { background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.2); border-radius:10px; padding:.8rem 1rem; color:#fca5a5; font-size:.82rem; display:none; margin-top:1rem; }
+  </style>
+</head>
+<body>
+  <canvas id="stars"></canvas>
+  <div class="aurora"></div>
+  <div class="card">
+    <div class="header">
+      <div class="sonar">
+        <div class="sonar-ring"></div><div class="sonar-ring"></div><div class="sonar-ring"></div>
+        <div class="sonar-core">📡</div>
+      </div>
+      <div class="title">Location Finder</div>
+      <div class="subtitle">GPS Coordinate Capture Tool</div>
+    </div>
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Stand at your office location and press capture</span>
+    </div>
+    <div class="coords-grid">
+      <div class="coord-card" id="latCard"><div class="coord-tag">Latitude</div><div class="coord-val" id="latVal">---.------</div></div>
+      <div class="coord-card" id="lonCard"><div class="coord-tag">Longitude</div><div class="coord-val" id="lonVal">---.------</div></div>
+    </div>
+    <div class="acc-row" id="accRow">
+      <div class="acc-pill">🎯 Accuracy</div>
+      <div class="acc-bar-wrap"><div class="acc-bar" id="accBar"></div></div>
+      <div class="acc-pill" id="accVal">±-- m</div>
+    </div>
+    <div class="btn-wrap">
+      <button class="btn" id="btn" onclick="capture()"><span class="shine"></span>📡 &nbsp;Capture My Location</button>
+      <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+    <div class="code-box" id="codeBox">
+      <div class="code-header">
+        <div class="code-dots"><span></span><span></span><span></span></div>
+        <span class="code-filename">main.py</span>
+        <button class="copy-btn" onclick="copyCode()">📋 Copy</button>
+      </div>
+      <div class="code-body" id="codeBody"></div>
+    </div>
+    <div class="err-box" id="errBox"></div>
+  </div>
+
+  <script>
+    /* star field */
+    const canvas=document.getElementById('stars'),ctx=canvas.getContext('2d');let stars=[];
+    function initStars(){canvas.width=innerWidth;canvas.height=innerHeight;stars=Array.from({length:130},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:Math.random()*1.2+.2,o:Math.random(),s:Math.random()*.005+.002,d:Math.random()>.5?1:-1}));}
+    function drawStars(){ctx.clearRect(0,0,canvas.width,canvas.height);stars.forEach(s=>{s.o+=s.s*s.d;if(s.o>1||s.o<.1)s.d*=-1;ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fillStyle=`rgba(148,163,184,${s.o})`;ctx.fill();});requestAnimationFrame(drawStars);}
+    initStars();drawStars();window.addEventListener('resize',initStars);
+
+    let lat=null,lon=null;
+
+    function capture(){
+      const btn=document.getElementById('btn'),dot=document.getElementById('statusDot'),st=document.getElementById('statusText'),pb=document.getElementById('progressBar'),pf=document.getElementById('progressFill');
+      btn.disabled=true;btn.innerHTML='<span class="shine"></span>⏳ &nbsp;Acquiring Signal...';
+      dot.className='status-dot active';st.textContent='Communicating with GPS satellites...';
+      document.getElementById('errBox').style.display='none';
+      pb.classList.add('show');setTimeout(()=>pf.classList.add('run'),50);
+      navigator.geolocation.getCurrentPosition(pos=>{
+        lat=pos.coords.latitude.toFixed(6);lon=pos.coords.longitude.toFixed(6);
+        const acc=Math.round(pos.coords.accuracy);
+        typeVal('latVal',lat,()=>{document.getElementById('latCard').classList.add('lit');document.getElementById('latVal').classList.add('active');});
+        setTimeout(()=>typeVal('lonVal',lon,()=>{document.getElementById('lonCard').classList.add('lit');document.getElementById('lonVal').classList.add('active');}),200);
+        document.getElementById('accRow').classList.add('show');
+        document.getElementById('accVal').textContent=`±${acc}m`;
+        setTimeout(()=>document.getElementById('accBar').style.width=Math.max(10,Math.min(100,100-acc))+'%',300);
+        dot.className='status-dot active';st.textContent='Location captured successfully';
+        renderCode(lat,lon);setTimeout(()=>document.getElementById('codeBox').classList.add('show'),400);
+        pf.style.transition='none';pf.style.width='100%';
+        setTimeout(()=>{pb.classList.remove('show');pf.classList.remove('run');pf.style.width='0%';pf.style.transition='';},400);
+        btn.disabled=false;btn.innerHTML='<span class="shine"></span>🔄 &nbsp;Refresh Location';
+      },err=>{
+        document.getElementById('statusDot').className='status-dot err';
+        document.getElementById('statusText').textContent='Location access failed';
+        const eb=document.getElementById('errBox');eb.style.display='block';
+        eb.textContent='⚠️ '+err.message+' — Allow location permission in your browser and try again.';
+        pb.classList.remove('show');btn.disabled=false;btn.innerHTML='<span class="shine"></span>📡 &nbsp;Try Again';
+      },{enableHighAccuracy:true,timeout:12000});
+    }
+
+    function typeVal(id,value,cb){
+      const el=document.getElementById(id);el.textContent='';let i=0;
+      const iv=setInterval(()=>{el.textContent+=value[i];i++;if(i>=value.length){clearInterval(iv);if(cb)cb();}},40);
+    }
+
+    function renderCode(lat,lon){
+      document.getElementById('codeBody').innerHTML=[
+        {n:1,h:`<span class="cm"># ── Office location config ──</span>`},
+        {n:2,h:`<span class="kw">OFFICE_LAT</span> = <span class="nm">${lat}</span>`},
+        {n:3,h:`<span class="kw">OFFICE_LON</span> = <span class="nm">${lon}</span>`},
+        {n:4,h:`<span class="kw">ALLOWED_RADIUS_METERS</span> = <span class="nm">100</span>`},
+      ].map(l=>`<div class="code-line"><span class="ln">${l.n}</span><span class="code-text">${l.h}</span></div>`).join('');
+    }
+
+    function copyCode(){
+      if(!lat||!lon)return;
+      navigator.clipboard.writeText(`OFFICE_LAT = ${lat}\nOFFICE_LON = ${lon}\nALLOWED_RADIUS_METERS = 100`).then(()=>{
+        const b=document.querySelector('.copy-btn');b.textContent='✅ Copied!';setTimeout(()=>b.textContent='📋 Copy',2000);
+      });
+    }
+  </script>
+</body>
+</html>

@@ -29,9 +29,10 @@ app.mount("/photos", StaticFiles(directory=PHOTOS_DIR), name="photos")
 
 init_db()
 
+
 # ── Set your office coordinates here ──
-OFFICE_LAT = 12.961407
-OFFICE_LON = 77.502102
+OFFICE_LAT =12.9584217
+OFFICE_LON = 77.5012103
 ALLOWED_RADIUS_METERS = 100
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -93,6 +94,51 @@ class AttendanceRequest(BaseModel):
     accuracy: Optional[float] = None
     speed: Optional[float] = None
     sensor_data: Optional[dict] = None
+
+class TaskRequest(BaseModel):
+    user_id: int
+    title: str
+    description: Optional[str] = ''
+    date: Optional[str] = None
+    status: Optional[str] = 'pending'
+
+class LeaveRequest(BaseModel):
+    user_id: int
+    start_date: str
+    end_date: str
+    reason: str
+
+class MeetingRequest(BaseModel):
+    created_by: int
+    title: str
+    description: Optional[str] = None
+    scheduled_for: str
+    user_id: Optional[int] = None
+    meeting_link: Optional[str] = None
+
+class MeetingResponseRequest(BaseModel):
+    user_id: int
+    response: str
+
+class ReferralRequest(BaseModel):
+    referrer_id: int
+    candidate_name: str
+    candidate_email: str
+    resume_url: Optional[str] = None
+
+class ReferralStatusUpdate(BaseModel):
+    status: str
+    bonus_awarded: Optional[bool] = False
+
+class UserUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    profile_photo: Optional[str] = None
+    github: Optional[str] = None
+    linkedin: Optional[str] = None
+    mobile_number: Optional[str] = None
+    performance_points: Optional[int] = None
 
 # ── Fake GPS Detection Functions ──
 def get_ip_location(ip_address: str) -> tuple:
@@ -206,13 +252,16 @@ def register(req: RegisterRequest):
 def login(req: LoginRequest):
     db = get_db()
     user = db.execute(
-        "SELECT id, name, email, profile_photo FROM users WHERE email=? AND password=?",
+        "SELECT id, name, email, profile_photo, github, linkedin, mobile_number FROM users WHERE email=? AND password=?",
         (req.email, req.password)
     ).fetchone()
     db.close()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password. Only registered users can login.")
-    return {"id": user["id"], "name": user["name"], "email": user["email"], "profile_photo": user["profile_photo"]}
+    return {
+        "id": user["id"], "name": user["name"], "email": user["email"], "profile_photo": user["profile_photo"],
+        "github": user["github"], "linkedin": user["linkedin"], "mobile_number": user["mobile_number"]
+    }
 
 @app.post("/attendance")
 def mark_attendance(req: AttendanceRequest, request: Request):
@@ -330,23 +379,279 @@ def get_attendance(user_id: int):
     db.close()
     return [dict(r) for r in rows]
 
-# ── Admin Routes ──
-@app.get("/admin/all-attendance")
-def all_attendance():
+@app.get("/users/{user_id}")
+def get_user(user_id: int):
     db = get_db()
-    rows = db.execute("""
-        SELECT a.*, u.name, u.email
-        FROM attendance a
-        JOIN users u ON a.user_id = u.id
-        ORDER BY a.timestamp DESC
-    """).fetchall()
+    user = db.execute("SELECT id, name, email, profile_photo, github, linkedin, mobile_number, performance_points FROM users WHERE id=?", (user_id,)).fetchone()
+    db.close()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return dict(user)
+
+@app.put("/users/{user_id}")
+def update_user(user_id: int, req: UserUpdateRequest):
+    db = get_db()
+    if not db.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone():
+        db.close()
+        raise HTTPException(status_code=404, detail="User not found")
+
+    fields = []
+    params = []
+
+    if req.name is not None:
+        fields.append("name=?")
+        params.append(req.name)
+    if req.email is not None:
+        fields.append("email=?")
+        params.append(req.email)
+    if req.password is not None:
+        fields.append("password=?")
+        params.append(req.password)
+
+    if req.profile_photo:
+        filename = f"profile_{uuid.uuid4().hex}.jpg"
+        save_base64_image(req.profile_photo, filename)
+        profile_path = f"photos/{filename}"
+        fields.append("profile_photo=?")
+        params.append(profile_path)
+
+    if req.github is not None:
+        fields.append("github=?")
+        params.append(req.github)
+    if req.linkedin is not None:
+        fields.append("linkedin=?")
+        params.append(req.linkedin)
+    if req.mobile_number is not None:
+        fields.append("mobile_number=?")
+        params.append(req.mobile_number)
+
+    if fields:
+        params.append(user_id)
+        db.execute(f"UPDATE users SET {', '.join(fields)} WHERE id=?", tuple(params))
+        db.commit()
+
+    user = db.execute("SELECT id, name, email, profile_photo, github, linkedin, mobile_number FROM users WHERE id=?", (user_id,)).fetchone()
+    db.close()
+    return dict(user)
+
+@app.post("/tasks")
+def create_task(req: TaskRequest):
+    db = get_db()
+    task_date = req.date or datetime.utcnow().date().isoformat()
+    now = datetime.utcnow().isoformat()
+    cursor = db.execute(
+        "INSERT INTO tasks (user_id, title, description, date, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        (req.user_id, req.title, req.description, task_date, now, now)
+    )
+    db.commit()
+    task_id = cursor.lastrowid
+    db.close()
+    return {"id": task_id, "message": "Task created"}
+
+@app.get("/tasks/{user_id}")
+def get_tasks(user_id: int):
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM tasks WHERE user_id=? ORDER BY date DESC, id DESC",
+        (user_id,)
+    ).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+@app.post("/tasks/{task_id}")
+def update_task(task_id: int, req: TaskRequest):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    new_status = req.status if req.status else 'pending'
+    db.execute(
+        "UPDATE tasks SET title=?, description=?, date=?, status=?, updated_at=? WHERE id=?",
+        (req.title, req.description, req.date or datetime.utcnow().date().isoformat(), new_status, now, task_id)
+    )
+    db.commit()
+    db.close()
+    return {"message": "Task updated"}
+
+@app.post("/tasks/{task_id}/complete")
+def complete_task(task_id: int):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    db.execute("UPDATE tasks SET status='completed', updated_at=? WHERE id=?", (now, task_id))
+    db.commit()
+    db.close()
+    return {"message": "Task completed"}
+
+@app.post("/tasks/{task_id}/inprogress")
+def inprogress_task(task_id: int):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    db.execute("UPDATE tasks SET status='in-progress', updated_at=? WHERE id=?", (now, task_id))
+    db.commit()
+    db.close()
+    return {"message": "Task set in-progress"}
+
+@app.post("/leaves")
+def request_leave(req: LeaveRequest):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    cursor = db.execute(
+        "INSERT INTO leave_requests (user_id, start_date, end_date, reason, status, requested_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        (req.user_id, req.start_date, req.end_date, req.reason, now, now)
+    )
+    db.commit()
+    leave_id = cursor.lastrowid
+    db.close()
+    return {"id": leave_id, "message": "Leave requested"}
+
+@app.get("/leaves/{user_id}")
+def get_leaves(user_id: int):
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM leave_requests WHERE user_id=? ORDER BY requested_at DESC",
+        (user_id,)
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.post("/meetings")
+def create_meeting(req: MeetingRequest):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    cursor = db.execute(
+        "INSERT INTO meetings (created_by, title, description, scheduled_for, user_id, status, created_at, meeting_link) VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?)",
+        (req.created_by, req.title, req.description, req.scheduled_for, req.user_id, now, req.meeting_link)
+    )
+    db.commit()
+    meeting_id = cursor.lastrowid
+    db.close()
+    return {"id": meeting_id, "message": "Meeting scheduled"}
+
+@app.get("/meetings/{user_id}")
+def get_meetings(user_id: int):
+    db = get_db()
+    rows = db.execute(
+        "SELECT m.*, u.name AS organizer_name, "
+        "(SELECT mr.response FROM meeting_responses mr WHERE mr.meeting_id=m.id AND mr.user_id=?) AS my_response "
+        "FROM meetings m JOIN users u ON m.created_by=u.id "
+        "WHERE m.user_id IS NULL OR m.user_id=? "
+        "ORDER BY scheduled_for DESC",
+        (user_id, user_id)
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.post("/meetings/{meeting_id}/respond")
+def respond_meeting(meeting_id: int, req: MeetingResponseRequest):
+    if req.response not in ('accept', 'decline', 'maybe'):
+        raise HTTPException(status_code=400, detail='Invalid response')
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    existing = db.execute("SELECT id FROM meeting_responses WHERE meeting_id=? AND user_id=?", (meeting_id, req.user_id)).fetchone()
+    if existing:
+        db.execute("UPDATE meeting_responses SET response=?, responded_at=? WHERE id=?", (req.response, now, existing['id']))
+    else:
+        db.execute("INSERT INTO meeting_responses (meeting_id, user_id, response, responded_at) VALUES (?, ?, ?, ?)", (meeting_id, req.user_id, req.response, now))
+    db.commit()
+    db.close()
+    return {"message": "Response recorded"}
+
+@app.post("/referrals")
+def create_referral(req: ReferralRequest):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    cursor = db.execute(
+        "INSERT INTO referrals (referrer_id, candidate_name, candidate_email, resume_url, status, bonus_awarded, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)",
+        (req.referrer_id, req.candidate_name, req.candidate_email, req.resume_url, now, now)
+    )
+    db.commit()
+    referral_id = cursor.lastrowid
+    db.close()
+    return {"id": referral_id, "message": "Referral submitted"}
+
+@app.get("/referrals/{user_id}")
+def get_referrals(user_id: int):
+    db = get_db()
+    rows = db.execute("SELECT * FROM referrals WHERE referrer_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/admin/meetings")
+def admin_get_meetings():
+    db = get_db()
+    rows = db.execute("SELECT m.*, u.name AS organizer_name FROM meetings m JOIN users u ON m.created_by=u.id ORDER BY scheduled_for DESC").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/admin/meeting-responses")
+def admin_get_meeting_responses():
+    db = get_db()
+    rows = db.execute("SELECT mr.*, u.name AS user_name, m.title AS meeting_title FROM meeting_responses mr JOIN users u ON mr.user_id=u.id JOIN meetings m ON mr.meeting_id=m.id ORDER BY responded_at DESC").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/admin/referrals")
+def admin_get_referrals():
+    db = get_db()
+    rows = db.execute("SELECT r.*, u.name AS referrer_name, u.email AS referrer_email FROM referrals r JOIN users u ON r.referrer_id=u.id ORDER BY created_at DESC").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.put("/admin/referrals/{referral_id}")
+def admin_update_referral(referral_id: int, req: ReferralStatusUpdate):
+    if req.status not in ('pending', 'hired', 'rejected', 'done'):
+        raise HTTPException(status_code=400, detail='Invalid status')
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    bonus = 1 if req.bonus_awarded else 0
+    db.execute("UPDATE referrals SET status=?, bonus_awarded=?, updated_at=? WHERE id=?", (req.status, bonus, now, referral_id))
+    db.commit()
+    db.close()
+    return {"message": "Referral updated"}
+
+# ── Admin Routes ──
+@app.post("/admin/create-user")
+def create_user(req: RegisterRequest):
+    try:
+        db = get_db()
+        # Check if user already exists
+        existing = db.execute("SELECT id FROM users WHERE email=?", (req.email,)).fetchone()
+        if existing:
+            db.close()
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        # Save profile photo if provided
+        profile_photo_path = None
+        if req.selfie:
+            profile_photo_path = f"profile_{uuid.uuid4().hex}.jpg"
+            save_base64_image(req.selfie, profile_photo_path)
+
+        # Insert user
+        cursor = db.execute(
+            "INSERT INTO users (name, email, password, profile_photo) VALUES (?, ?, ?, ?)",
+            (req.name, req.email, req.password, profile_photo_path)
+        )
+        db.commit()
+        user_id = cursor.lastrowid
+        db.close()
+        return {"id": user_id, "message": "User created successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create user error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/users")
 def get_users():
     db = get_db()
-    rows = db.execute("SELECT id, name, email FROM users ORDER BY id").fetchall()
+    rows = db.execute("SELECT id, name, email, performance_points FROM users ORDER BY id").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/admin/all-attendance")
+def get_all_attendance():
+    db = get_db()
+    rows = db.execute(
+        "SELECT a.*, u.name, u.email FROM attendance a JOIN users u ON a.user_id=u.id ORDER BY timestamp DESC"
+    ).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -384,3 +689,45 @@ def get_stats():
         "daily_checkins": [dict(r) for r in daily],
         "per_user": [dict(r) for r in per_user],
     }
+
+@app.get("/admin/tasks")
+def get_all_tasks():
+    db = get_db()
+    rows = db.execute("SELECT t.*, u.name, u.email FROM tasks t JOIN users u ON t.user_id=u.id ORDER BY t.date DESC, t.id DESC").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/admin/leaves")
+def get_all_leaves():
+    db = get_db()
+    rows = db.execute("SELECT l.*, u.name, u.email FROM leave_requests l JOIN users u ON l.user_id=u.id ORDER BY l.requested_at DESC").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.post("/admin/leaves/{leave_id}/approve")
+def approve_leave(leave_id: int):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    db.execute("UPDATE leave_requests SET status='approved', updated_at=? WHERE id=?", (now, leave_id))
+    db.commit()
+    db.close()
+    return {"message": "Leave approved"}
+
+@app.post("/admin/leaves/{leave_id}/reject")
+def reject_leave(leave_id: int):
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    db.execute("UPDATE leave_requests SET status='rejected', updated_at=? WHERE id=?", (now, leave_id))
+    db.commit()
+    db.close()
+    return {"message": "Leave rejected"}
+
+@app.put("/admin/users/{user_id}/performance")
+def update_user_performance(user_id: int, req: dict):
+    if 'performance_points' not in req:
+        raise HTTPException(status_code=400, detail='performance_points required')
+    db = get_db()
+    db.execute("UPDATE users SET performance_points=? WHERE id=?", (req['performance_points'], user_id))
+    db.commit()
+    db.close()
+    return {"message": "Performance points updated"}

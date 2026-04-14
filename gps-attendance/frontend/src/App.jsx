@@ -1,8 +1,8 @@
 import { useState } from 'react'
+import './App.css'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import AdminDashboard from './components/AdminDashboard'
-import './App.css'
 
 // Admin credentials (frontend-only gate — backend has no role system)
 const ADMIN_EMAIL = 'admin@attendtrack.com'
